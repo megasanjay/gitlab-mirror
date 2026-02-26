@@ -7,9 +7,18 @@ set -euo pipefail
 # - Uses `git clone --mirror` / `git push --mirror` so all refs (branches, tags, remote-tracking refs) are copied.
 # - Safe to run repeatedly and suitable for scheduling (cron, systemd timer, Task Scheduler, etc.).
 
+# Load environment variables from a local .env file in the script directory, if present.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  # shellcheck source=/dev/null
+  set -a
+  . "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 # ===== CONFIG =====
-GITHUB_OWNER="YOUR_GITHUB_USERNAME_OR_ORG"
-GITLAB_NAMESPACE="YOUR_GITLAB_NAMESPACE"   # e.g. "yourname" or "yourgroup/subgroup"
+GITHUB_OWNER="${GITHUB_OWNER:-YOUR_GITHUB_USERNAME_OR_ORG}"
+GITLAB_NAMESPACE="${GITLAB_NAMESPACE:-YOUR_GITLAB_NAMESPACE}"   # e.g. "yourname" or "yourgroup/subgroup"
 
 # Local path where bare mirror clones are stored.
 # Can be overridden via the BACKUP_DIR environment variable.

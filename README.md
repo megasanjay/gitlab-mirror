@@ -109,6 +109,30 @@ Subsequent runs will:
 
 ---
 
+## Validating your setup
+
+You can run a quick sanity check before the first mirror run:
+
+```bash
+chmod +x check_requirements.sh
+./check_requirements.sh
+```
+
+This will:
+
+- Ensure required tools (`git`, `curl`, `jq`, `python3`, `gh`) are installed.
+- Load `.env` (if present) and check that `GH_TOKEN` and `GITLAB_TOKEN` are set.
+- Warn if `GITHUB_OWNER` / `GITLAB_NAMESPACE` are still placeholder values.
+- Confirm that:
+  - GitHub CLI can list repos for `GITHUB_OWNER`.
+  - GitLab API can resolve the configured `GITLAB_NAMESPACE`.
+
+If required tools are missing and a supported package manager is available (`apt-get`, `brew`, `dnf`, `yum`, or `pacman`), `check_requirements.sh` will attempt to install them for you. If it cannot, it will tell you exactly which tools need to be installed manually.
+
+If this script exits successfully, `mirror.sh` should be ready to run.
+
+---
+
 ## Private repositories
 
 **Yes, private repos are supported.** The key is that your tokens must have access:
