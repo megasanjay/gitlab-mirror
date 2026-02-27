@@ -209,6 +209,9 @@ You can run this manually whenever you want, or schedule it.
 
    ```bash
    30 3 * * * . $HOME/.gitlab_mirror_env && cd /path/to/gitlab-mirror && /usr/bin/env bash mirror.sh >> $HOME/gitlab-mirror.log 2>&1
+
+   # if you cloned the repo to /root/gitlab-mirror
+   30 3 * * * cd /root/gitlab-mirror && /usr/bin/env bash mirror.sh >> /root/gitlab-mirror/mirror.log 2>&1
    ```
 
    Cron timing format:
@@ -221,7 +224,10 @@ You can run this manually whenever you want, or schedule it.
 4. **Test the exact command cron will run**:
 
    ```bash
-   . $HOME/.gitlab_mirror_env && cd /path/to/gitlab-mirror && /usr/bin/env bash mirror.sh
+   . $HOME/.env && cd /path/to/gitlab-mirror && /usr/bin/env bash mirror.sh
+
+   # if you cloned the repo to /root/gitlab-mirror
+   cd /root/gitlab-mirror && /usr/bin/env bash mirror.sh
    ```
 
 ---
