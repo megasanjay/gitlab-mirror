@@ -60,6 +60,9 @@ Edit `mirror.sh` or set these environment variables before running:
   - Defaults to `"$HOME/git-mirror-backups"` if not set.
 - **`MIRROR_SLEEP_SECS`** (optional): delay in seconds between processing each repo.
   - Defaults to `0` (no delay). Set to a small value (for example `1`–`3`) if you want to be extra gentle on API/rate limits.
+- **`SKIP_REPOS`** (optional): comma-separated list of repo names to ignore for both mirroring and cleanup.
+  - Example: `SKIP_REPOS="legacy-repo,experimental-sandbox,do-not-touch"`.
+  - Repos listed here will not be mirrored, and any matching GitLab projects will be left untouched by the cleanup step.
 
 Required tokens (must be set as environment variables):
 
@@ -106,6 +109,16 @@ Subsequent runs will:
 
 - `fetch` updates from GitHub into the existing mirrors.
 - `push --mirror` changes to GitLab.
+
+After the mirror step, the script will also:
+
+- List all GitLab projects in `GITLAB_NAMESPACE`.
+- Compare them to the current GitHub repo list.
+- For any GitLab project that:
+  - **Does not** have a matching GitHub repo name,
+  - **Does** have a local mirror directory (`<name>.git` in `BACKUP_DIR`),
+  - **Is not** listed in `SKIP_REPOS`,
+  it will delete the GitLab project and remove the corresponding local mirror directory.
 
 ---
 

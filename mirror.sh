@@ -28,6 +28,10 @@ BACKUP_DIR="${BACKUP_DIR:-$HOME/git-mirror-backups}"
 # Override with MIRROR_SLEEP_SECS=<n> in your environment if needed.
 MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-10}"
 
+# Optional comma-separated list of repo names to skip entirely
+# (applies to both mirroring and cleanup).
+SKIP_REPOS="${SKIP_REPOS:-}"
+
 # Tokens (required, enforced below):
 # - GitHub: gh CLI handles auth for listing; cloning via https below uses GH_TOKEN (recommended)
 # - GitLab: used to create repos via API and push via https
@@ -37,6 +41,31 @@ MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-10}"
 # GitLab URL (self-managed? change this)
 GITLAB_API="https://gitlab.com/api/v4"
 GITLAB_HOST="gitlab.com"
+
+should_skip_repo() {
+  local repo="$1"
+
+  if [[ -z "${SKIP_REPOS:-}" ]]; then
+    return 1
+  fi
+
+  local IFS=','
+  local entry
+  read -ra _skip_array <<<"$SKIP_REPOS"
+
+  for entry in "${_skip_array[@]}"; do
+    # Strip all whitespace from the entry for robustness.
+    entry="${entry//[[:space:]]/}"
+    if [[ -z "$entry" ]]; then
+      continue
+    fi
+    if [[ "$repo" == "$entry" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 mkdir -p "$BACKUP_DIR"
 cd "$BACKUP_DIR"
@@ -69,6 +98,13 @@ echo "GitLab namespace id: $ns_id"
 echo "Starting mirror of $(echo "$repo_meta" | wc -l | tr -d ' ') repos..."
 
 while IFS=$'\t' read -r repo gh_visibility; do
+  if should_skip_repo "$repo"; then
+    echo
+    echo "=== $repo ==="
+    echo "Skipping (listed in SKIP_REPOS)."
+    continue
+  fi
+
   echo
   echo "=== $repo ==="
   echo "GitHub visibility: $gh_visibility"
@@ -134,6 +170,68 @@ PY
     sleep "$MIRROR_SLEEP_SECS"
   fi
 done <<< "$repo_meta"
+
+echo
+echo "Scanning for GitLab projects in $GITLAB_NAMESPACE that no longer exist on GitHub..."
+
+# Build a simple newline-separated list of GitHub repo names for membership checks.
+github_repos="$(echo "$repo_meta" | cut -f1)"
+
+# Collect all GitLab projects in this namespace (handle pagination).
+gitlab_projects_json="[]"
+page=1
+while :; do
+  page_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    "$GITLAB_API/projects?namespace_id=$ns_id&per_page=100&page=$page&simple=true")"
+
+  if [[ "$(echo "$page_json" | jq 'length')" -eq 0 ]]; then
+    break
+  fi
+
+  gitlab_projects_json="$(jq -s '.[0] + .[1]' \
+    <(printf '%s\n' "$gitlab_projects_json") \
+    <(printf '%s\n' "$page_json"))"
+
+  ((page++))
+done
+
+gitlab_project_names="$(echo "$gitlab_projects_json" | jq -r '.[].name')"
+
+while IFS= read -r gl_repo; do
+  [[ -z "$gl_repo" ]] && continue
+
+  if should_skip_repo "$gl_repo"; then
+    echo "Skipping cleanup for $gl_repo (listed in SKIP_REPOS)."
+    continue
+  fi
+
+  if grep -Fxq "$gl_repo" <<<"$github_repos"; then
+    continue
+  fi
+
+  # Only manage GitLab projects that also have a local mirror directory.
+  if [[ ! -d "$gl_repo.git" ]]; then
+    echo "GitLab project '$GITLAB_NAMESPACE/$gl_repo' has no matching GitHub repo, but no local mirror directory was found; leaving it untouched."
+    continue
+  fi
+
+  echo "Deleting GitLab project '$GITLAB_NAMESPACE/$gl_repo' (no matching GitHub repo) and its local mirror..."
+
+  encoded_gl_path="$(
+    PATH_PART="$GITLAB_NAMESPACE/$gl_repo" python3 - <<'PY'
+import urllib.parse, os
+print(urllib.parse.quote(os.environ["PATH_PART"], safe=""))
+PY
+  )"
+
+  if ! curl -sf --request DELETE \
+    --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    "$GITLAB_API/projects/$encoded_gl_path" >/dev/null; then
+    echo "WARNING: Failed to delete GitLab project $GITLAB_NAMESPACE/$gl_repo"
+  fi
+
+  rm -rf "$gl_repo.git"
+done <<< "$gitlab_project_names"
 
 echo
 echo "All done. Local mirrors stored in: $BACKUP_DIR"
