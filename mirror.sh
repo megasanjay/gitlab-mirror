@@ -71,6 +71,13 @@ echo "Starting mirror of $(echo "$repo_meta" | wc -l | tr -d ' ') repos..."
 while IFS=$'\t' read -r repo gh_visibility; do
   echo
   echo "=== $repo ==="
+  echo "GitHub visibility: $gh_visibility"
+
+  gitlab_visibility="private"
+  if [[ "$gh_visibility" == "public" ]]; then
+    gitlab_visibility="public"
+  fi
+  echo "Desired GitLab visibility: $gitlab_visibility"
 
   # Check if project exists on GitLab (by full path "<namespace>/<repo>").
   encoded_path="$(
@@ -85,16 +92,26 @@ PY
 
   if [[ "$exists_code" != "200" ]]; then
     echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$repo"
-    gitlab_visibility="private"
-    if [[ "$gh_visibility" == "public" ]]; then
-      gitlab_visibility="public"
-    fi
+    echo "Creating GitLab project with visibility: $gitlab_visibility"
     curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       --data "name=$repo&namespace_id=$ns_id&visibility=$gitlab_visibility" \
       "$GITLAB_API/projects" >/dev/null
   else
-    echo "GitLab project exists."
+    echo "GitLab project exists, checking visibility..."
+    project_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+      "$GITLAB_API/projects/$encoded_path")"
+    current_visibility="$(echo "$project_json" | jq -r '.visibility')"
+    echo "Current GitLab visibility: $current_visibility"
+    if [[ "$current_visibility" != "$gitlab_visibility" ]]; then
+      echo "Updating GitLab project visibility to: $gitlab_visibility"
+      curl -sf --request PUT \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --data "visibility=$gitlab_visibility" \
+        "$GITLAB_API/projects/$encoded_path" >/dev/null
+    else
+      echo "GitLab visibility already matches desired."
+    fi
   fi
 
   # Mirror clone/fetch
