@@ -73,11 +73,12 @@ for repo in $repo_names; do
   echo "=== $repo ==="
 
   # Check if project exists on GitLab (by full path "<namespace>/<repo>").
-  encoded_path="$(python3 - <<PY
-import urllib.parse
-print(urllib.parse.quote(f"{'$GITLAB_NAMESPACE'}/{repo}", safe=''))
+  encoded_path="$(
+    PATH_PART="$GITLAB_NAMESPACE/$repo" python3 - <<'PY'
+import urllib.parse, os
+print(urllib.parse.quote(os.environ["PATH_PART"], safe=""))
 PY
-)"
+  )"
   exists_code="$(curl -s -o /dev/null -w "%{http_code}" \
     --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
     "$GITLAB_API/projects/$encoded_path")"
