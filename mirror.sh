@@ -44,7 +44,7 @@ cd "$BACKUP_DIR"
 echo "Fetching repo list from GitHub owner: $GITHUB_OWNER ..."
 # Ask GitHub CLI for up to 1000 repos owned by/under $GITHUB_OWNER.
 repos_json="$(gh repo list "$GITHUB_OWNER" --limit 1000 --json name,sshUrl,visibility,isFork)"
-repo_names="$(echo "$repos_json" | jq -r '.[].name')"
+repo_meta="$(echo "$repos_json" | jq -r '.[] | [.name, .visibility] | @tsv')"
 
 # Find GitLab namespace ID (needed for project creation). This must match full_path exactly.
 echo "Resolving GitLab namespace ID for: $GITLAB_NAMESPACE ..."
@@ -66,9 +66,9 @@ if [[ "$ns_id" == "null" || -z "$ns_id" ]]; then
 fi
 
 echo "GitLab namespace id: $ns_id"
-echo "Starting mirror of $(echo "$repo_names" | wc -l | tr -d ' ') repos..."
+echo "Starting mirror of $(echo "$repo_meta" | wc -l | tr -d ' ') repos..."
 
-for repo in $repo_names; do
+while IFS=$'\t' read -r repo gh_visibility; do
   echo
   echo "=== $repo ==="
 
@@ -85,9 +85,13 @@ PY
 
   if [[ "$exists_code" != "200" ]]; then
     echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$repo"
+    gitlab_visibility="private"
+    if [[ "$gh_visibility" == "public" ]]; then
+      gitlab_visibility="public"
+    fi
     curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-      --data "name=$repo&namespace_id=$ns_id&visibility=private" \
+      --data "name=$repo&namespace_id=$ns_id&visibility=$gitlab_visibility" \
       "$GITLAB_API/projects" >/dev/null
   else
     echo "GitLab project exists."
@@ -112,7 +116,7 @@ PY
     echo "Sleeping for $MIRROR_SLEEP_SECS seconds before next repo..."
     sleep "$MIRROR_SLEEP_SECS"
   fi
-done
+done <<< "$repo_meta"
 
 echo
 echo "All done. Local mirrors stored in: $BACKUP_DIR"

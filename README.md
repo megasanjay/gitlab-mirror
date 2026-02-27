@@ -149,7 +149,7 @@ If this script exits successfully, `mirror.sh` should be ready to run.
 
 - **GitLab side**
   - `GITLAB_TOKEN` must be allowed to create projects in `GITLAB_NAMESPACE` and push to them.
-  - New projects are created as `visibility=private` by default (you can change this in `mirror.sh` if needed).
+  - New projects are created with the **same visibility** as on GitHub (`public`/`private`).
 
 What gets mirrored for private repos is identical to public ones: all branches, tags, and refs.
 
@@ -212,7 +212,6 @@ You can run this manually whenever you want, or schedule it.
    ```
 
    Cron timing format:
-
    - `minute hour day-of-month month day-of-week`
    - Example variations:
      - Every day at 2am: `0 2 * * *`
