@@ -74,7 +74,7 @@ while IFS=$'\t' read -r repo gh_visibility; do
   echo "GitHub visibility: $gh_visibility"
 
   gitlab_visibility="private"
-  if [[ "$gh_visibility" == "public" ]]; then
+  if [[ "$gh_visibility" == "PUBLIC" ]]; then
     gitlab_visibility="public"
   fi
   echo "Desired GitLab visibility: $gitlab_visibility"
