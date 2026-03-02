@@ -33,8 +33,8 @@ MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-2}"
 SKIP_REPOS="${SKIP_REPOS:-}"
 
 # Optional prefix added to every GitLab project name (display only, not path).
-# Defaults to the mirror emoji followed by a space.
-MIRROR_EMOJI_PREFIX=${MIRROR_EMOJI_PREFIX:-"🪞 "}
+# Defaults to an underscore.
+MIRROR_EMOJI_PREFIX=${MIRROR_EMOJI_PREFIX:-"_"}
 
 # Tokens (required, enforced below):
 # - GitHub: used for API (repo list) and cloning via https
