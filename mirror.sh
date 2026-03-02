@@ -32,6 +32,10 @@ MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-2}"
 # (applies to both mirroring and cleanup).
 SKIP_REPOS="${SKIP_REPOS:-}"
 
+# Optional prefix added to every GitLab project name (display only, not path).
+# Defaults to the mirror emoji followed by a space.
+MIRROR_EMOJI_PREFIX=${MIRROR_EMOJI_PREFIX:-"🪞 "}
+
 # Tokens (required, enforced below):
 # - GitHub: used for API (repo list) and cloning via https
 # - GitLab: used to create repos via API and push via https
@@ -175,24 +179,42 @@ PY
   if [[ "$exists_code" != "200" ]]; then
     echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$repo"
     echo "Creating GitLab project with visibility: $gitlab_visibility"
+    project_name="${MIRROR_EMOJI_PREFIX}${repo}"
     curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-      --data "name=$repo&namespace_id=$ns_id&visibility=$gitlab_visibility" \
+      --data-urlencode "name=$project_name" \
+      --data "path=$repo&namespace_id=$ns_id&visibility=$gitlab_visibility" \
       "$GITLAB_API/projects" >/dev/null
   else
     echo "GitLab project exists, checking visibility..."
     project_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       "$GITLAB_API/projects/$encoded_path")"
     current_visibility="$(echo "$project_json" | jq -r '.visibility')"
+    current_name="$(echo "$project_json" | jq -r '.name')"
     echo "Current GitLab visibility: $current_visibility"
+    echo "Current GitLab name: $current_name"
+
+    needs_visibility_update=0
+    needs_name_update=0
+
     if [[ "$current_visibility" != "$gitlab_visibility" ]]; then
-      echo "Updating GitLab project visibility to: $gitlab_visibility"
+      needs_visibility_update=1
+    fi
+
+    desired_name="${MIRROR_EMOJI_PREFIX}${repo}"
+    if [[ "$current_name" != "${MIRROR_EMOJI_PREFIX}"* ]]; then
+      needs_name_update=1
+    fi
+
+    if [[ "$needs_visibility_update" -eq 1 || "$needs_name_update" -eq 1 ]]; then
+      echo "Updating GitLab project metadata..."
       curl -sf --request PUT \
         --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-        --data "visibility=$gitlab_visibility" \
+        $( [[ "$needs_name_update" -eq 1 ]] && printf '%s' --data-urlencode "name=$desired_name" ) \
+        $( [[ "$needs_visibility_update" -eq 1 ]] && printf '%s' --data "visibility=$gitlab_visibility" ) \
         "$GITLAB_API/projects/$encoded_path" >/dev/null
     else
-      echo "GitLab visibility already matches desired."
+      echo "GitLab visibility and name already match desired."
     fi
   fi
 
@@ -241,7 +263,7 @@ while :; do
   ((page++))
 done
 
-gitlab_project_names="$(echo "$gitlab_projects_json" | jq -r '.[].name')"
+gitlab_project_names="$(echo "$gitlab_projects_json" | jq -r '.[].path')"
 
 while IFS= read -r gl_repo; do
   [[ -z "$gl_repo" ]] && continue
