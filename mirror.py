@@ -361,6 +361,94 @@ def gitlab_delete_project(gitlab_api: str, token: str, full_path: str) -> None:
         )
 
 
+def gitlab_list_projects_for_namespace(
+    gitlab_api: str, token: str, ns_id: int
+) -> List[Dict[str, object]]:
+    """
+    Return projects for a namespace, handling both group and user namespaces.
+    For user namespaces, this follows the GitLab workflow:
+    1) GET /namespaces/:id to discover kind and path (username)
+    2) If kind == "user", resolve username -> user id via /users?username=
+    3) List projects via /users/:id/projects
+    For group namespaces, use /groups/:id/projects.
+    For other namespaces, fall back to /projects?namespace_id=.
+    """
+    headers = {"PRIVATE-TOKEN": token}
+
+    # Step 1: inspect the namespace to determine its kind and path/username
+    ns_url = f"{gitlab_api}/namespaces/{ns_id}"
+    status, ns_data = http_get_json(ns_url, headers=headers)
+    if status != 200 or not isinstance(ns_data, dict):
+        print("ERROR: Failed to fetch GitLab namespace info.", file=sys.stderr)
+        sys.exit(1)
+
+    kind = str(ns_data.get("kind", ""))
+    path = str(ns_data.get("path", ""))
+
+    # Step 2/3: user namespace -> resolve user id, then list user's projects
+    if kind == "user":
+        if not path:
+            print(
+                "ERROR: GitLab user namespace is missing path/username.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        users_url = f"{gitlab_api}/users?username={quote(path)}"
+        status_user, users_data = http_get_json(users_url, headers=headers)
+        if status_user != 200 or not isinstance(users_data, list) or not users_data:
+            print(
+                "ERROR: Failed to resolve GitLab user from namespace path.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        user_id = users_data[0].get("id")
+        if user_id is None:
+            print("ERROR: GitLab user object missing id.", file=sys.stderr)
+            sys.exit(1)
+
+        projects_url = f"{gitlab_api}/users/{user_id}/projects?per_page=100"
+        status_proj, projects_data = http_get_json(projects_url, headers=headers)
+        if status_proj != 200 or not isinstance(projects_data, list):
+            print(
+                "ERROR: Failed to fetch GitLab projects list for user.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        return projects_data
+
+    # Group namespaces should be listed via /groups/:id/projects
+    if kind == "group":
+        group_id = ns_data.get("id")
+        if group_id is None:
+            print("ERROR: GitLab group namespace missing id.", file=sys.stderr)
+            sys.exit(1)
+
+        projects_url = f"{gitlab_api}/groups/{group_id}/projects?per_page=100"
+        status_proj, projects_data = http_get_json(projects_url, headers=headers)
+        if status_proj != 200 or not isinstance(projects_data, list):
+            print(
+                "ERROR: Failed to fetch GitLab projects list for group.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        return projects_data
+
+    # Other namespaces (if any) use the namespace_id filter
+    projects_url = (
+        f"{gitlab_api}/projects?namespace_id={ns_id}&per_page=100&simple=true"
+    )
+    status_proj, projects_data = http_get_json(projects_url, headers=headers)
+    if status_proj != 200 or not isinstance(projects_data, list):
+        print("ERROR: Failed to fetch GitLab projects list.", file=sys.stderr)
+        sys.exit(1)
+
+    return projects_data
+
+
 def main(argv: Sequence[str]) -> int:
     script_dir = Path(__file__).resolve().parent
     load_dotenv(script_dir / ".env")
@@ -562,12 +650,7 @@ def main(argv: Sequence[str]) -> int:
 
     # Collect GitLab projects in this namespace (single request, assumes <= 100 projects)
     print(f"Fetching GitLab projects list for namespace ID {ns_id}...")
-    headers = {"PRIVATE-TOKEN": gitlab_token}
-    url = f"{gitlab_api}/projects?namespace_id={ns_id}&per_page=100&simple=true"
-    status, data = http_get_json(url, headers=headers)
-    if status != 200 or not isinstance(data, list):
-        print("ERROR: Failed to fetch GitLab projects list.", file=sys.stderr)
-        return 1
+    data = gitlab_list_projects_for_namespace(gitlab_api, gitlab_token, ns_id)
 
     gitlab_project_names: List[str] = []
     for item in data:
