@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # GitHub -> GitLab mirror backup script.
-# - Lists all repos for a GitHub owner/org using the GitHub CLI (`gh`).
+# - Lists all repos for a GitHub owner/org using the GitHub API (paginated).
 # - Ensures a matching project exists in the target GitLab namespace.
 # - Uses `git clone --mirror` / `git push --mirror` so all refs (branches, tags, remote-tracking refs) are copied.
 # - Safe to run repeatedly and suitable for scheduling (cron, systemd timer, Task Scheduler, etc.).
@@ -33,7 +33,7 @@ MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-10}"
 SKIP_REPOS="${SKIP_REPOS:-}"
 
 # Tokens (required, enforced below):
-# - GitHub: gh CLI handles auth for listing; cloning via https below uses GH_TOKEN (recommended)
+# - GitHub: used for API (repo list) and cloning via https
 # - GitLab: used to create repos via API and push via https
 : "${GH_TOKEN:?Set GH_TOKEN (GitHub token with read access)}"
 : "${GITLAB_TOKEN:?Set GITLAB_TOKEN (GitLab token with api+write_repository)}"
@@ -71,9 +71,55 @@ mkdir -p "$BACKUP_DIR"
 cd "$BACKUP_DIR"
 
 echo "Fetching repo list from GitHub owner: $GITHUB_OWNER ..."
-# Ask GitHub CLI for up to 1000 repos owned by/under $GITHUB_OWNER.
-repos_json="$(gh repo list "$GITHUB_OWNER" --limit 1000 --json name,sshUrl,visibility,isFork)"
-repo_meta="$(echo "$repos_json" | jq -r '.[] | [.name, .visibility] | @tsv')"
+# Use GitHub API with pagination (org or user). GH_TOKEN is required.
+GITHUB_API="https://api.github.com"
+repos_json="[]"
+# Try org first; if 404, treat as user.
+page=1
+while :; do
+  # Try organization repos endpoint first.
+  page_resp="$(curl -s -w "\n%{http_code}" \
+    --header "Authorization: Bearer $GH_TOKEN" \
+    --header "Accept: application/vnd.github+json" \
+    "$GITHUB_API/orgs/$GITHUB_OWNER/repos?per_page=100&page=$page&type=all")"
+  http_code="${page_resp##*$'\n'}"
+  page_body="${page_resp%$'\n'*}"
+  if [[ "$http_code" != "200" && "$http_code" != "404" ]]; then
+    echo "ERROR: GitHub API returned HTTP $http_code for org $GITHUB_OWNER"
+    echo "$page_body" | jq -r '.message // .' 2>/dev/null || echo "$page_body"
+    exit 1
+  fi
+  if [[ "$http_code" == "404" && "$page" == "1" ]]; then
+    # Not an org; use user repos endpoint.
+    page=1
+    while :; do
+      page_resp="$(curl -s -w "\n%{http_code}" \
+        --header "Authorization: Bearer $GH_TOKEN" \
+        --header "Accept: application/vnd.github+json" \
+        "$GITHUB_API/users/$GITHUB_OWNER/repos?per_page=100&page=$page&type=all")"
+      http_code="${page_resp##*$'\n'}"
+      page_body="${page_resp%$'\n'*}"
+      if [[ "$page" == "1" && "$http_code" != "200" ]]; then
+        echo "ERROR: GitHub API returned HTTP $http_code for user $GITHUB_OWNER"
+        echo "$page_body" | jq -r '.message // .' 2>/dev/null || echo "$page_body"
+        exit 1
+      fi
+      if [[ "$(echo "$page_body" | jq 'length')" -eq 0 ]]; then
+        break
+      fi
+      repos_json="$(jq -s '.[0] + .[1]' <(printf '%s\n' "$repos_json") <(printf '%s\n' "$page_body"))"
+      ((page++))
+    done
+    break
+  fi
+  if [[ "$(echo "$page_body" | jq 'length')" -eq 0 ]]; then
+    break
+  fi
+  repos_json="$(jq -s '.[0] + .[1]' <(printf '%s\n' "$repos_json") <(printf '%s\n' "$page_body"))"
+  ((page++))
+done
+# name and visibility (API: .visibility or .private -> PUBLIC/PRIVATE)
+repo_meta="$(echo "$repos_json" | jq -r '.[] | [.name, ((.visibility // (if .private then "private" else "public" end)) | ascii_upcase)] | @tsv')"
 
 # Find GitLab namespace ID (needed for project creation). This must match full_path exactly.
 echo "Resolving GitLab namespace ID for: $GITLAB_NAMESPACE ..."

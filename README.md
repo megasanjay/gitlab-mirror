@@ -12,7 +12,7 @@ The script is designed to be **idempotent** (safe to re-run) and easy to schedul
 
 ## What this script does
 
-- **Lists GitHub repositories**: uses the GitHub CLI (`gh`) to list all repos for a given owner/org.
+- **Lists GitHub repositories**: uses the GitHub REST API (with your `GH_TOKEN`) to list all repos for a given owner/org.
 - **Ensures GitLab projects exist**: uses the GitLab API to create any missing projects in a target namespace.
 - **Maintains local bare mirrors**: keeps a local `--mirror` clone per repo in a backup directory.
 - **Pushes mirrors to GitLab**: pushes all refs from GitHub to GitLab with `git push --mirror`.
@@ -31,9 +31,6 @@ This is a **git backup**, not a full GitHub clone. It does **not** copy issues, 
   - `curl`
   - `jq`
   - `python3`
-  - GitHub CLI: `gh`
-- **GitHub authentication**
-  - Run `gh auth login` and ensure `gh repo list` works.
 - **GitHub token (`GH_TOKEN`)**
   - Classic PAT: `repo` scope is sufficient.
   - Fine-grained PAT: grant **read access** to the repos you want to mirror.
@@ -86,7 +83,7 @@ export GH_TOKEN="github_pat_..."
 export GITLAB_TOKEN="glpat-..."
 ```
 
-4. **Run the script** from the repo directory:
+1. **Run the script** from the repo directory:
 
 ```bash
 bash mirror.sh
@@ -133,11 +130,11 @@ chmod +x check_requirements.sh
 
 This will:
 
-- Ensure required tools (`git`, `curl`, `jq`, `python3`, `gh`) are installed.
+- Ensure required tools (`git`, `curl`, `jq`, `python3`) are installed.
 - Load `.env` (if present) and check that `GH_TOKEN` and `GITLAB_TOKEN` are set.
 - Warn if `GITHUB_OWNER` / `GITLAB_NAMESPACE` are still placeholder values.
 - Confirm that:
-  - GitHub CLI can list repos for `GITHUB_OWNER`.
+  - The GitHub REST API can list repos for `GITHUB_OWNER` using `GH_TOKEN`.
   - GitLab API can resolve the configured `GITLAB_NAMESPACE`.
 
 If required tools are missing and a supported package manager is available (`apt-get`, `brew`, `dnf`, `yum`, or `pacman`), `check_requirements.sh` will attempt to install them for you. If it cannot, it will tell you exactly which tools need to be installed manually.
@@ -151,14 +148,7 @@ If this script exits successfully, `mirror.sh` should be ready to run.
 **Yes, private repos are supported.** The key is that your tokens must have access:
 
 - **GitHub side**
-  - `GH_TOKEN` must see the private repos you care about.
-  - Quick check:
-
-    ```bash
-    gh repo list "$GITHUB_OWNER" --visibility private
-    ```
-
-    If a private repo shows up here, the script will mirror it.
+  - `GH_TOKEN` must see the private repos you care about. Any repo visible to that token via the GitHub REST API will be mirrored.
 
 - **GitLab side**
   - `GITLAB_TOKEN` must be allowed to create projects in `GITLAB_NAMESPACE` and push to them.
@@ -258,7 +248,7 @@ You can run this manually whenever you want, or schedule it.
 
 - **Different GitLab host**: change `GITLAB_API` and `GITLAB_HOST` at the top of `mirror.sh`.
 - **Include/exclude certain repos**:
-  - Currently, all repos listed by `gh repo list "$GITHUB_OWNER"` are mirrored.
+  - Currently, all repositories returned by the GitHub REST API for `GITHUB_OWNER` (user or org) are mirrored.
   - You can filter `repos_json` with `jq` (for example, skip forks or archived repos) if you want a more selective mirror.
 
 This script is intended as a straightforward, repeatable way to mirror many GitHub repositories (dozens or more) into GitLab with minimal manual clicking.

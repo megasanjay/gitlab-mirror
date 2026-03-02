@@ -17,7 +17,7 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
 fi
 
 echo "Checking required tools..."
-required_tools=(git curl jq python3 gh)
+required_tools=(git curl jq python3)
 missing=()
 for t in "${required_tools[@]}"; do
   if ! command -v "$t" >/dev/null 2>&1; then
@@ -90,15 +90,6 @@ fi
 echo "All required tools are installed."
 
 echo
-echo "Checking GitHub CLI authentication..."
-if ! gh auth status >/dev/null 2>&1; then
-  echo "ERROR: GitHub CLI is not authenticated."
-  echo "Run: gh auth login"
-  exit 1
-fi
-echo "GitHub CLI is authenticated."
-
-echo
 echo "Checking required environment variables..."
 
 # Mirror script defaults (kept in sync with mirror.sh).
@@ -122,8 +113,28 @@ echo "Environment variables present."
 
 echo
 echo "Verifying GitHub access for owner: $GITHUB_OWNER ..."
-if ! gh repo list "$GITHUB_OWNER" --limit 1 >/dev/null 2>&1; then
-  echo "ERROR: Unable to list GitHub repos for owner '$GITHUB_OWNER'."
+GITHUB_API="${GITHUB_API:-https://api.github.com}"
+
+# Try organization endpoint first; if that 404s, fall back to user.
+resp="$(curl -s -w '\n%{http_code}' \
+  --header "Authorization: Bearer $GH_TOKEN" \
+  --header "Accept: application/vnd.github+json" \
+  "$GITHUB_API/orgs/$GITHUB_OWNER/repos?per_page=1&page=1&type=all")"
+http_code="${resp##*$'\n'}"
+body="${resp%$'\n'*}"
+
+if [[ "$http_code" == "404" ]]; then
+  resp="$(curl -s -w '\n%{http_code}' \
+    --header "Authorization: Bearer $GH_TOKEN" \
+    --header "Accept: application/vnd.github+json" \
+    "$GITHUB_API/users/$GITHUB_OWNER/repos?per_page=1&page=1&type=all")"
+  http_code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+fi
+
+if [[ "$http_code" != "200" ]]; then
+  echo "ERROR: Unable to list GitHub repos for owner '$GITHUB_OWNER' (HTTP $http_code)."
+  echo "$body" | jq -r '.message // .' 2>/dev/null || echo "$body"
   echo "Check that GITHUB_OWNER is correct and that GH_TOKEN has access."
   exit 1
 fi
