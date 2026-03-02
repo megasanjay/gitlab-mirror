@@ -37,9 +37,10 @@ SKIP_REPOS="${SKIP_REPOS:-}"
 MIRROR_EMOJI_PREFIX=${MIRROR_EMOJI_PREFIX:-"_"}
 
 # Optional prefix added to the GitLab project path when the GitHub repo
-# name does not start with a valid GitLab path character (letter, digit, emoji, or underscore).
-# Defaults to an underscore.
-GITLAB_PATH_PREFIX=${GITLAB_PATH_PREFIX:-"_"}
+# name does not start with a valid GitLab path character (letter or digit).
+# GitLab requires path to NOT start with '-', '_', or '.'; so this prefix must start with a letter or digit.
+# Defaults to "glm" (GitLab mirror).
+GITLAB_PATH_PREFIX=${GITLAB_PATH_PREFIX:-"glm"}
 
 # Tokens (required, enforced below):
 # - GitHub: used for API (repo list) and cloning via https
@@ -170,10 +171,10 @@ while IFS=$'\t' read -r repo gh_visibility; do
   fi
   echo "Desired GitLab visibility: $gitlab_visibility"
 
-  # Derive the GitLab project path. If the GitHub repo name starts with an
-  # invalid first character for a GitLab path (e.g., '.'), prefix it.
+  # Derive the GitLab project path. GitLab path must not start with '-', '_', or '.'.
+  # Prefix with GITLAB_PATH_PREFIX (must start with letter/digit) when needed.
   gitlab_path="$repo"
-  if [[ ! "$repo" =~ ^[[:alnum:]_] ]]; then
+  if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
     gitlab_path="${GITLAB_PATH_PREFIX}${repo}"
   fi
 
@@ -265,7 +266,7 @@ github_gitlab_paths=""
 while IFS= read -r gh_repo; do
   [[ -z "$gh_repo" ]] && continue
   gl_path="$gh_repo"
-  if [[ ! "$gh_repo" =~ ^[[:alnum:]_] ]]; then
+  if [[ ! "$gh_repo" =~ ^[[:alnum:]] ]]; then
     gl_path="${GITLAB_PATH_PREFIX}${gh_repo}"
   fi
   github_gitlab_paths+="$gl_path"$'\n'
@@ -305,13 +306,10 @@ while IFS= read -r gl_repo; do
 
   # Only manage GitLab projects that also have a local mirror directory.
   # Reconstruct the local directory name (original GitHub repo name) from the
-  # GitLab project path, in case we prefixed it for an initially invalid name.
+  # GitLab project path when we prefixed it (path = GITLAB_PATH_PREFIX + repo).
   local_repo_name="$gl_repo"
   if [[ "$gl_repo" == "$GITLAB_PATH_PREFIX"* ]]; then
-    second_char="${gl_repo:1:1}"
-    if [[ ! "$second_char" =~ [[:alnum:]_] ]]; then
-      local_repo_name="${gl_repo#$GITLAB_PATH_PREFIX}"
-    fi
+    local_repo_name="${gl_repo#$GITLAB_PATH_PREFIX}"
   fi
 
   if [[ ! -d "$local_repo_name.git" ]]; then
