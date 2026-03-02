@@ -192,7 +192,15 @@ PY
   if [[ "$exists_code" != "200" ]]; then
     echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$gitlab_path"
     echo "Creating GitLab project with visibility: $gitlab_visibility"
-    project_name="${MIRROR_EMOJI_PREFIX}${repo}"
+
+    # Only add the mirror prefix to the project name if the original repo
+    # starts with a non-alphanumeric character. Otherwise, keep the name
+    # exactly the same as the GitHub repo.
+    project_name="$repo"
+    if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
+      project_name="${MIRROR_EMOJI_PREFIX}${repo}"
+    fi
+
     echo "GitLab API request: POST $GITLAB_API/projects name='$project_name' path='$gitlab_path' namespace_id='$ns_id' visibility='$gitlab_visibility'"
     curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
@@ -215,8 +223,11 @@ PY
       needs_visibility_update=1
     fi
 
-    desired_name="${MIRROR_EMOJI_PREFIX}${repo}"
-    if [[ "$current_name" != "${MIRROR_EMOJI_PREFIX}"* ]]; then
+    desired_name="$repo"
+    if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
+      desired_name="${MIRROR_EMOJI_PREFIX}${repo}"
+    fi
+    if [[ "$current_name" != "$desired_name" ]]; then
       needs_name_update=1
     fi
 
