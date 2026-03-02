@@ -52,6 +52,21 @@ GITLAB_PATH_PREFIX=${GITLAB_PATH_PREFIX:-"glm"}
 GITLAB_API="https://gitlab.com/api/v4"
 GITLAB_HOST="gitlab.com"
 
+# CLI flags
+SKIP_MIRROR=0
+for arg in "$@"; do
+  case "$arg" in
+    --cleanup-only)
+      SKIP_MIRROR=1
+      ;;
+    *)
+      echo "Unknown argument: $arg"
+      echo "Usage: $0 [--cleanup-only]"
+      exit 1
+      ;;
+  esac
+done
+
 should_skip_repo() {
   local repo="$1"
 
@@ -151,118 +166,123 @@ if [[ "$ns_id" == "null" || -z "$ns_id" ]]; then
 fi
 
 echo "GitLab namespace id: $ns_id"
-echo "Starting mirror of $(echo "$repo_meta" | wc -l | tr -d ' ') repos..."
 
-while IFS=$'\t' read -r repo gh_visibility; do
-  if should_skip_repo "$repo"; then
+if [[ "$SKIP_MIRROR" -eq 0 ]]; then
+  echo "Starting mirror of $(echo "$repo_meta" | wc -l | tr -d ' ') repos..."
+
+  while IFS=$'\t' read -r repo gh_visibility; do
+    if should_skip_repo "$repo"; then
+      echo
+      echo "=== $repo ==="
+      echo "Skipping (listed in SKIP_REPOS)."
+      continue
+    fi
+
     echo
     echo "=== $repo ==="
-    echo "Skipping (listed in SKIP_REPOS)."
-    continue
-  fi
+    echo "GitHub visibility: $gh_visibility"
 
-  echo
-  echo "=== $repo ==="
-  echo "GitHub visibility: $gh_visibility"
+    gitlab_visibility="private"
+    if [[ "$gh_visibility" == "PUBLIC" ]]; then
+      gitlab_visibility="public"
+    fi
+    echo "Desired GitLab visibility: $gitlab_visibility"
 
-  gitlab_visibility="private"
-  if [[ "$gh_visibility" == "PUBLIC" ]]; then
-    gitlab_visibility="public"
-  fi
-  echo "Desired GitLab visibility: $gitlab_visibility"
+    # Derive the GitLab project path. GitLab path must not start with '-', '_', or '.'.
+    # Prefix with GITLAB_PATH_PREFIX (must start with letter/digit) when needed.
+    gitlab_path="$repo"
+    if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
+      gitlab_path="${GITLAB_PATH_PREFIX}${repo}"
+    fi
 
-  # Derive the GitLab project path. GitLab path must not start with '-', '_', or '.'.
-  # Prefix with GITLAB_PATH_PREFIX (must start with letter/digit) when needed.
-  gitlab_path="$repo"
-  if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
-    gitlab_path="${GITLAB_PATH_PREFIX}${repo}"
-  fi
-
-  # Check if project exists on GitLab (by full path "<namespace>/<gitlab_path>").
-  encoded_path="$(
-    PATH_PART="$GITLAB_NAMESPACE/$gitlab_path" python3 - <<'PY'
+    # Check if project exists on GitLab (by full path "<namespace>/<gitlab_path>").
+    encoded_path="$(
+      PATH_PART="$GITLAB_NAMESPACE/$gitlab_path" python3 - <<'PY'
 import urllib.parse, os
 print(urllib.parse.quote(os.environ["PATH_PART"], safe=""))
 PY
-  )"
-  exists_code="$(curl -s -o /dev/null -w "%{http_code}" \
-    --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-    "$GITLAB_API/projects/$encoded_path")"
-
-  if [[ "$exists_code" != "200" ]]; then
-    echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$gitlab_path"
-    echo "Creating GitLab project with visibility: $gitlab_visibility"
-
-    # Only add the mirror prefix to the project name if the original repo
-    # starts with a non-alphanumeric character. Otherwise, keep the name
-    # exactly the same as the GitHub repo.
-    project_name="$repo"
-    if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
-      project_name="${MIRROR_EMOJI_PREFIX}${repo}"
-    fi
-
-    echo "GitLab API request: POST $GITLAB_API/projects name='$project_name' path='$gitlab_path' namespace_id='$ns_id' visibility='$gitlab_visibility'"
-    curl -sf --request POST \
+    )"
+    exists_code="$(curl -s -o /dev/null -w "%{http_code}" \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-      --data-urlencode "name=$project_name" \
-      --data "path=$gitlab_path&namespace_id=$ns_id&visibility=$gitlab_visibility" \
-      "$GITLAB_API/projects" >/dev/null
-  else
-    echo "GitLab project exists, checking visibility..."
-    project_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       "$GITLAB_API/projects/$encoded_path")"
-    current_visibility="$(echo "$project_json" | jq -r '.visibility')"
-    current_name="$(echo "$project_json" | jq -r '.name')"
-    echo "Current GitLab visibility: $current_visibility"
-    echo "Current GitLab name: $current_name"
 
-    needs_visibility_update=0
-    needs_name_update=0
+    if [[ "$exists_code" != "200" ]]; then
+      echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$gitlab_path"
+      echo "Creating GitLab project with visibility: $gitlab_visibility"
 
-    if [[ "$current_visibility" != "$gitlab_visibility" ]]; then
-      needs_visibility_update=1
-    fi
+      # Only add the mirror prefix to the project name if the original repo
+      # starts with a non-alphanumeric character. Otherwise, keep the name
+      # exactly the same as the GitHub repo.
+      project_name="$repo"
+      if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
+        project_name="${MIRROR_EMOJI_PREFIX}${repo}"
+      fi
 
-    desired_name="$repo"
-    if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
-      desired_name="${MIRROR_EMOJI_PREFIX}${repo}"
-    fi
-    if [[ "$current_name" != "$desired_name" ]]; then
-      needs_name_update=1
-    fi
-
-    if [[ "$needs_visibility_update" -eq 1 || "$needs_name_update" -eq 1 ]]; then
-      echo "Updating GitLab project metadata..."
-      curl -sf --request PUT \
+      echo "GitLab API request: POST $GITLAB_API/projects name='$project_name' path='$gitlab_path' namespace_id='$ns_id' visibility='$gitlab_visibility'"
+      curl -sf --request POST \
         --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-        $( [[ "$needs_name_update" -eq 1 ]] && printf '%s' --data-urlencode "name=$desired_name" ) \
-        $( [[ "$needs_visibility_update" -eq 1 ]] && printf '%s' --data "visibility=$gitlab_visibility" ) \
-        "$GITLAB_API/projects/$encoded_path" >/dev/null
+        --data-urlencode "name=$project_name" \
+        --data "path=$gitlab_path&namespace_id=$ns_id&visibility=$gitlab_visibility" \
+        "$GITLAB_API/projects" >/dev/null
     else
-      echo "GitLab visibility and name already match desired."
+      echo "GitLab project exists, checking visibility..."
+      project_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        "$GITLAB_API/projects/$encoded_path")"
+      current_visibility="$(echo "$project_json" | jq -r '.visibility')"
+      current_name="$(echo "$project_json" | jq -r '.name')"
+      echo "Current GitLab visibility: $current_visibility"
+      echo "Current GitLab name: $current_name"
+
+      needs_visibility_update=0
+      needs_name_update=0
+
+      if [[ "$current_visibility" != "$gitlab_visibility" ]]; then
+        needs_visibility_update=1
+      fi
+
+      desired_name="$repo"
+      if [[ ! "$repo" =~ ^[[:alnum:]] ]]; then
+        desired_name="${MIRROR_EMOJI_PREFIX}${repo}"
+      fi
+      if [[ "$current_name" != "$desired_name" ]]; then
+        needs_name_update=1
+      fi
+
+      if [[ "$needs_visibility_update" -eq 1 || "$needs_name_update" -eq 1 ]]; then
+        echo "Updating GitLab project metadata..."
+        curl -sf --request PUT \
+          --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          $( [[ "$needs_name_update" -eq 1 ]] && printf '%s' --data-urlencode "name=$desired_name" ) \
+          $( [[ "$needs_visibility_update" -eq 1 ]] && printf '%s' --data "visibility=$gitlab_visibility" ) \
+          "$GITLAB_API/projects/$encoded_path" >/dev/null
+      else
+        echo "GitLab visibility and name already match desired."
+      fi
     fi
-  fi
 
-  # Mirror clone/fetch
-  if [[ ! -d "$repo.git" ]]; then
-    echo "Cloning mirror from GitHub..."
-    git clone --mirror "https://$GH_TOKEN@github.com/$GITHUB_OWNER/$repo.git" "$repo.git"
-  else
-    echo "Fetching updates from GitHub..."
-    git -C "$repo.git" remote set-url origin "https://$GH_TOKEN@github.com/$GITHUB_OWNER/$repo.git"
-    git -C "$repo.git" fetch -p origin
-  fi
+    # Mirror clone/fetch
+    if [[ ! -d "$repo.git" ]]; then
+      echo "Cloning mirror from GitHub..."
+      git clone --mirror "https://$GH_TOKEN@github.com/$GITHUB_OWNER/$repo.git" "$repo.git"
+    else
+      echo "Fetching updates from GitHub..."
+      git -C "$repo.git" remote set-url origin "https://$GH_TOKEN@github.com/$GITHUB_OWNER/$repo.git"
+      git -C "$repo.git" fetch -p origin
+    fi
 
-  # Push mirror to GitLab (branches, tags, and all refs).
-  echo "Pushing mirror to GitLab..."
-  git -C "$repo.git" push --mirror "https://oauth2:$GITLAB_TOKEN@$GITLAB_HOST/$GITLAB_NAMESPACE/$gitlab_path.git"
+    # Push mirror to GitLab (branches, tags, and all refs).
+    echo "Pushing mirror to GitLab..."
+    git -C "$repo.git" push --mirror "https://oauth2:$GITLAB_TOKEN@$GITLAB_HOST/$GITLAB_NAMESPACE/$gitlab_path.git"
 
-  # Optional throttle between repositories.
-  if [[ "$MIRROR_SLEEP_SECS" != "0" ]]; then
-    echo "Sleeping for $MIRROR_SLEEP_SECS seconds before next repo..."
-    sleep "$MIRROR_SLEEP_SECS"
-  fi
-done <<< "$repo_meta"
+    # Optional throttle between repositories.
+    if [[ "$MIRROR_SLEEP_SECS" != "0" ]]; then
+      echo "Sleeping for $MIRROR_SLEEP_SECS seconds before next repo..."
+      sleep "$MIRROR_SLEEP_SECS"
+    fi
+  done <<< "$repo_meta"
+else
+  echo "Skipping mirroring phase (running cleanup only due to --cleanup-only)."
+fi
 
 echo
 echo "Scanning for GitLab projects in $GITLAB_NAMESPACE that no longer exist on GitHub..."
