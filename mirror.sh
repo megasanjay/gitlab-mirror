@@ -81,7 +81,7 @@ while :; do
   page_resp="$(curl -s -w "\n%{http_code}" \
     --header "Authorization: Bearer $GH_TOKEN" \
     --header "Accept: application/vnd.github+json" \
-    "$GITHUB_API/orgs/$GITHUB_OWNER/repos?per_page=100&page=$page&type=all")"
+    "$GITHUB_API/orgs/$GITHUB_OWNER/repos?per_page=100&page=$page&type=owner")"
   http_code="${page_resp##*$'\n'}"
   page_body="${page_resp%$'\n'*}"
   if [[ "$http_code" != "200" && "$http_code" != "404" ]]; then
@@ -96,7 +96,7 @@ while :; do
       page_resp="$(curl -s -w "\n%{http_code}" \
         --header "Authorization: Bearer $GH_TOKEN" \
         --header "Accept: application/vnd.github+json" \
-        "$GITHUB_API/users/$GITHUB_OWNER/repos?per_page=100&page=$page&type=all")"
+        "$GITHUB_API/users/$GITHUB_OWNER/repos?per_page=100&page=$page&type=owner")"
       http_code="${page_resp##*$'\n'}"
       page_body="${page_resp%$'\n'*}"
       if [[ "$page" == "1" && "$http_code" != "200" ]]; then
