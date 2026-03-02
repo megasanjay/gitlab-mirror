@@ -192,11 +192,13 @@ PY
     echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$gitlab_path"
     echo "Creating GitLab project with visibility: $gitlab_visibility"
     project_name="${MIRROR_EMOJI_PREFIX}${repo}"
-    curl -sf --request POST \
+    echo "GitLab API request: POST $GITLAB_API/projects name='$project_name' path='$gitlab_path' namespace_id='$ns_id' visibility='$gitlab_visibility'"
+    create_resp="$(curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       --data-urlencode "name=$project_name" \
       --data "path=$gitlab_path&namespace_id=$ns_id&visibility=$gitlab_visibility" \
-      "$GITLAB_API/projects" >/dev/null
+      "$GITLAB_API/projects")"
+    echo "GitLab API response: $create_resp"
   else
     echo "GitLab project exists, checking visibility..."
     project_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
