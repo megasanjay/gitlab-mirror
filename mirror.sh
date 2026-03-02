@@ -286,18 +286,33 @@ done <<< "$github_repos"
 gitlab_projects_json="[]"
 page=1
 while :; do
-  page_json="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-    "$GITLAB_API/projects?namespace_id=$ns_id&per_page=100&page=$page&simple=true")"
+  resp_headers="$(mktemp)"
+  page_json="$(
+    curl -sS --fail \
+      --connect-timeout 10 --max-time 60 --retry 5 --retry-all-errors --retry-delay 1 \
+      --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+      -D "$resp_headers" \
+      "$GITLAB_API/projects?namespace_id=$ns_id&per_page=100&page=$page&simple=true"
+  )"
 
-  if [[ "$(echo "$page_json" | jq 'length')" -eq 0 ]]; then
-    break
+  if [[ "$(echo "$page_json" | jq -r 'type')" != "array" ]]; then
+    echo "ERROR: Expected array from GitLab projects API, got:"
+    echo "$page_json" | jq .
+    rm -f "$resp_headers"
+    exit 1
   fi
 
   gitlab_projects_json="$(jq -s '.[0] + .[1]' \
     <(printf '%s\n' "$gitlab_projects_json") \
     <(printf '%s\n' "$page_json"))"
 
-  ((page++))
+  next_page="$(awk -F': ' 'tolower($1)=="x-next-page"{gsub("\r","",$2); print $2}' "$resp_headers")"
+  rm -f "$resp_headers"
+
+  if [[ -z "$next_page" ]]; then
+    break
+  fi
+  page="$next_page"
 done
 
 gitlab_project_names="$(echo "$gitlab_projects_json" | jq -r '.[].path')"
