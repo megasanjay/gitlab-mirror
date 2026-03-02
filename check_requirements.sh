@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Basic requirements / sanity check script for the GitHub -> GitLab mirror.
-# - Verifies required tools are installed.
-# - Loads .env (same as mirror.sh) and checks required environment variables.
-# - Performs lightweight API checks against GitHub and GitLab.
+# - Verifies required tools are installed (git, python3 for mirror.py; curl, jq for this script).
+# - Loads .env (same as mirror.py) and checks required environment variables.
+# - Performs lightweight API checks against GitHub and GitLab (namespace resolution works for user or group).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -92,7 +92,7 @@ echo "All required tools are installed."
 echo
 echo "Checking required environment variables..."
 
-# Mirror script defaults (kept in sync with mirror.sh).
+# Mirror script defaults (kept in sync with mirror.py).
 GITHUB_OWNER="${GITHUB_OWNER:-YOUR_GITHUB_USERNAME_OR_ORG}"
 GITLAB_NAMESPACE="${GITLAB_NAMESPACE:-YOUR_GITLAB_NAMESPACE}"
 
@@ -101,12 +101,12 @@ GITLAB_NAMESPACE="${GITLAB_NAMESPACE:-YOUR_GITLAB_NAMESPACE}"
 
 if [[ "$GITHUB_OWNER" == "YOUR_GITHUB_USERNAME_OR_ORG" ]]; then
   echo "WARNING: GITHUB_OWNER is still the placeholder value."
-  echo "Set GITHUB_OWNER in .env or in mirror.sh to your GitHub user/org."
+  echo "Set GITHUB_OWNER in .env or your environment to your GitHub user/org."
 fi
 
 if [[ "$GITLAB_NAMESPACE" == "YOUR_GITLAB_NAMESPACE" ]]; then
   echo "WARNING: GITLAB_NAMESPACE is still the placeholder value."
-  echo "Set GITLAB_NAMESPACE in .env or in mirror.sh to your GitLab namespace."
+  echo "Set GITLAB_NAMESPACE in .env or your environment to your GitLab user or group path."
 fi
 
 echo "Environment variables present."
@@ -157,12 +157,15 @@ ns_id="$(echo "$ns_search" | jq -r --arg p "$GITLAB_NAMESPACE" '
 
 if [[ -z "${ns_id:-}" || "$ns_id" == "null" ]]; then
   echo "ERROR: Could not resolve GitLab namespace full_path='$GITLAB_NAMESPACE'."
-  echo "Make sure the namespace exists and that GITLAB_TOKEN has api access."
+  echo "Make sure the namespace exists (user or group) and that GITLAB_TOKEN has api access."
   exit 1
 fi
 
-echo "GitLab namespace resolved successfully (id: $ns_id)."
+# Confirm namespace is accessible and show kind (user/group) to match mirror.py cleanup logic
+ns_info="$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_API/namespaces/$ns_id")"
+ns_kind="$(echo "$ns_info" | jq -r '.kind // "unknown"')"
+echo "GitLab namespace resolved successfully (id: $ns_id, kind: $ns_kind)."
 
 echo
-echo "All checks passed. You are ready to run ./mirror.sh"
+echo "All checks passed. You are ready to run ./mirror.sh or python3 mirror.py"
 
