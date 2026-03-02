@@ -26,7 +26,7 @@ BACKUP_DIR="${BACKUP_DIR:-$HOME/git-mirror-backups}"
 
 # Optional delay between processing each repo (seconds), to avoid hitting API/rate limits.
 # Override with MIRROR_SLEEP_SECS=<n> in your environment if needed.
-MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-10}"
+MIRROR_SLEEP_SECS="${MIRROR_SLEEP_SECS:-2}"
 
 # Optional comma-separated list of repo names to skip entirely
 # (applies to both mirroring and cleanup).
