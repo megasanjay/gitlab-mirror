@@ -36,6 +36,11 @@ SKIP_REPOS="${SKIP_REPOS:-}"
 # Defaults to an underscore.
 MIRROR_EMOJI_PREFIX=${MIRROR_EMOJI_PREFIX:-"_"}
 
+# Optional prefix added to the GitLab project path when the GitHub repo
+# name does not start with a valid GitLab path character (letter, digit, emoji, or underscore).
+# Defaults to an underscore.
+GITLAB_PATH_PREFIX=${GITLAB_PATH_PREFIX:-"_"}
+
 # Tokens (required, enforced below):
 # - GitHub: used for API (repo list) and cloning via https
 # - GitLab: used to create repos via API and push via https
@@ -165,9 +170,16 @@ while IFS=$'\t' read -r repo gh_visibility; do
   fi
   echo "Desired GitLab visibility: $gitlab_visibility"
 
-  # Check if project exists on GitLab (by full path "<namespace>/<repo>").
+  # Derive the GitLab project path. If the GitHub repo name starts with an
+  # invalid first character for a GitLab path (e.g., '.'), prefix it.
+  gitlab_path="$repo"
+  if [[ ! "$repo" =~ ^[[:alnum:]_] ]]; then
+    gitlab_path="${GITLAB_PATH_PREFIX}${repo}"
+  fi
+
+  # Check if project exists on GitLab (by full path "<namespace>/<gitlab_path>").
   encoded_path="$(
-    PATH_PART="$GITLAB_NAMESPACE/$repo" python3 - <<'PY'
+    PATH_PART="$GITLAB_NAMESPACE/$gitlab_path" python3 - <<'PY'
 import urllib.parse, os
 print(urllib.parse.quote(os.environ["PATH_PART"], safe=""))
 PY
@@ -177,13 +189,13 @@ PY
     "$GITLAB_API/projects/$encoded_path")"
 
   if [[ "$exists_code" != "200" ]]; then
-    echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$repo"
+    echo "GitLab project missing -> creating $GITLAB_NAMESPACE/$gitlab_path"
     echo "Creating GitLab project with visibility: $gitlab_visibility"
     project_name="${MIRROR_EMOJI_PREFIX}${repo}"
     curl -sf --request POST \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       --data-urlencode "name=$project_name" \
-      --data "path=$repo&namespace_id=$ns_id&visibility=$gitlab_visibility" \
+      --data "path=$gitlab_path&namespace_id=$ns_id&visibility=$gitlab_visibility" \
       "$GITLAB_API/projects" >/dev/null
   else
     echo "GitLab project exists, checking visibility..."
@@ -230,7 +242,7 @@ PY
 
   # Push mirror to GitLab (branches, tags, and all refs).
   echo "Pushing mirror to GitLab..."
-  git -C "$repo.git" push --mirror "https://oauth2:$GITLAB_TOKEN@$GITLAB_HOST/$GITLAB_NAMESPACE/$repo.git"
+  git -C "$repo.git" push --mirror "https://oauth2:$GITLAB_TOKEN@$GITLAB_HOST/$GITLAB_NAMESPACE/$gitlab_path.git"
 
   # Optional throttle between repositories.
   if [[ "$MIRROR_SLEEP_SECS" != "0" ]]; then
@@ -244,6 +256,18 @@ echo "Scanning for GitLab projects in $GITLAB_NAMESPACE that no longer exist on 
 
 # Build a simple newline-separated list of GitHub repo names for membership checks.
 github_repos="$(echo "$repo_meta" | cut -f1)"
+
+# Build the corresponding list of expected GitLab project paths for those repos,
+# using the same mapping rule as in the main mirroring loop.
+github_gitlab_paths=""
+while IFS= read -r gh_repo; do
+  [[ -z "$gh_repo" ]] && continue
+  gl_path="$gh_repo"
+  if [[ ! "$gh_repo" =~ ^[[:alnum:]_] ]]; then
+    gl_path="${GITLAB_PATH_PREFIX}${gh_repo}"
+  fi
+  github_gitlab_paths+="$gl_path"$'\n'
+done <<< "$github_repos"
 
 # Collect all GitLab projects in this namespace (handle pagination).
 gitlab_projects_json="[]"
@@ -273,12 +297,22 @@ while IFS= read -r gl_repo; do
     continue
   fi
 
-  if grep -Fxq "$gl_repo" <<<"$github_repos"; then
+  if grep -Fxq "$gl_repo" <<<"$github_gitlab_paths"; then
     continue
   fi
 
   # Only manage GitLab projects that also have a local mirror directory.
-  if [[ ! -d "$gl_repo.git" ]]; then
+  # Reconstruct the local directory name (original GitHub repo name) from the
+  # GitLab project path, in case we prefixed it for an initially invalid name.
+  local_repo_name="$gl_repo"
+  if [[ "$gl_repo" == "$GITLAB_PATH_PREFIX"* ]]; then
+    second_char="${gl_repo:1:1}"
+    if [[ ! "$second_char" =~ [[:alnum:]_] ]]; then
+      local_repo_name="${gl_repo#$GITLAB_PATH_PREFIX}"
+    fi
+  fi
+
+  if [[ ! -d "$local_repo_name.git" ]]; then
     echo "GitLab project '$GITLAB_NAMESPACE/$gl_repo' has no matching GitHub repo, but no local mirror directory was found; leaving it untouched."
     continue
   fi
@@ -298,7 +332,7 @@ PY
     echo "WARNING: Failed to delete GitLab project $GITLAB_NAMESPACE/$gl_repo"
   fi
 
-  rm -rf "$gl_repo.git"
+  rm -rf "$local_repo_name.git"
 done <<< "$gitlab_project_names"
 
 echo
