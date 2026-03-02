@@ -282,40 +282,24 @@ while IFS= read -r gh_repo; do
   github_gitlab_paths+="$gl_path"$'\n'
 done <<< "$github_repos"
 
-# Collect all GitLab projects in this namespace (handle pagination).
-gitlab_projects_json="[]"
-page=1
-while :; do
-  resp_headers="$(mktemp)"
-  page_json="$(
-    curl -sS --fail \
+# Collect GitLab projects in this namespace with a single request (assumes <= 100 projects).
+echo "Fetching GitLab projects list for namespace ID $ns_id..."
+gitlab_projects_file="$(mktemp)"
+if ! curl -sS --fail \
       --connect-timeout 10 --max-time 60 --retry 5 --retry-all-errors --retry-delay 1 \
       --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-      -D "$resp_headers" \
-      "$GITLAB_API/projects?namespace_id=$ns_id&per_page=100&page=$page&simple=true"
-  )"
+      "$GITLAB_API/projects?namespace_id=$ns_id&per_page=100&simple=true" \
+      > "$gitlab_projects_file"; then
+  echo "ERROR: Failed to fetch GitLab projects list (curl error)."
+  rm -f "$gitlab_projects_file"
+  exit 1
+fi
+echo "Successfully fetched GitLab projects list, parsing with jq..."
 
-  if [[ "$(echo "$page_json" | jq -r 'type')" != "array" ]]; then
-    echo "ERROR: Expected array from GitLab projects API, got:"
-    echo "$page_json" | jq .
-    rm -f "$resp_headers"
-    exit 1
-  fi
-
-  gitlab_projects_json="$(jq -s '.[0] + .[1]' \
-    <(printf '%s\n' "$gitlab_projects_json") \
-    <(printf '%s\n' "$page_json"))"
-
-  next_page="$(awk -F': ' 'tolower($1)=="x-next-page"{gsub("\r","",$2); print $2}' "$resp_headers")"
-  rm -f "$resp_headers"
-
-  if [[ -z "$next_page" ]]; then
-    break
-  fi
-  page="$next_page"
-done
-
-gitlab_project_names="$(echo "$gitlab_projects_json" | jq -r '.[].path')"
+gitlab_project_names="$(jq -r '.[].path' "$gitlab_projects_file")"
+echo "Parsed GitLab project names:"
+echo "$gitlab_project_names"
+rm -f "$gitlab_projects_file"
 
 while IFS= read -r gl_repo; do
   [[ -z "$gl_repo" ]] && continue
